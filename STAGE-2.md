@@ -10,13 +10,16 @@ Esta etapa construye un archivo `openstack_user_config.yml` funcional **de menos
 - ✅ Añadir capas funcionales una a una, validando cada paso.
 - 🧪 Identificar errores frecuentes en tiempo real.
 - 📚 Conectar con la documentación oficial como referencia.
+- 🔍 Validar completamente el estado del nodo `controller` antes de ejecutar playbooks.
+- 🧩 Asegurar que todas las herramientas necesarias estén instaladas en bastion.
+- 🛡️ Confirmar que todos los nodos están correctamente preparados a nivel de red antes de proceder.
 
 ---
 
 ## 🔰 1. Estructura mínima viable (`openstack_user_config.yml`)
 
 Inspirado en el archivo oficial:\
-🔗 [https://opendev.org/openstack/openstack-ansible/src/branch/master/etc/openstack\_deploy/openstack\_user\_config.yml.aio](https://opendev.org/openstack/openstack-ansible/src/branch/master/etc/openstack_deploy/openstack_user_config.yml.aio)
+🔗 [https://opendev.org/openstack/openstack-ansible/src/branch/master/etc/openstack\_deploy/openstack_user_config.yml.aio](https://opendev.org/openstack/openstack-ansible/src/branch/master/etc/openstack_deploy/openstack_user_config.yml.aio)
 
 ```yaml
 global_overrides:
@@ -55,130 +58,165 @@ shared-infra_hosts:
 - Solo se define el host `controller` inicialmente. Más nodos se añadirán en etapas posteriores.
 - Para evitar que Ansible intente ejecutar roles no configurados o servicios aún no definidos (como contenedores que aún no existen), **puedes limitar la ejecución de Ansible a grupos o hosts concretos que están definidos**.
 
-Ejemplo para ejecutar pings solo sobre el host físico:
+🔎 **Descripción de las capas del archivo `openstack_user_config.yml`**:
+
+- `global_overrides`: define variables globales para el despliegue, como IPs del load balancer virtual, bridges utilizados por los contenedores y la configuración de redes de gestión.
+- `cidr_networks`: define los rangos de red usados internamente por los distintos tipos de red de OpenStack (contenedores, túneles, almacenamiento).
+- `used_ips`: reserva direcciones IP que no deben ser utilizadas por OpenStack Ansible para contenedores o servicios.
+- `shared-infra_hosts`: define los nodos físicos del grupo de infraestructura compartida. En esta etapa, únicamente se configura el nodo `controller` con su IP de gestión.
+
+✅ **Estado de red limpio esperado en un nodo tras provisión** (por ejemplo `controller`, sin manipulación):
 
 ```bash
-ansible controller -i /opt/openstack-ansible/inventory/dynamic_inventory.py -m ping
+ip a
 ```
-
-Ejemplo de validación de todos los hosts definidos:
+Debe mostrar:
+- `enp0s8` con `192.168.56.10/24`
+- `enp0s9` con `10.0.0.10/24`
+- `enp0s10` con `172.16.0.10/24`
 
 ```bash
-ansible all -i /opt/openstack-ansible/inventory/dynamic_inventory.py -m ping
+brctl show
 ```
+No mostrará aún `br-mgmt`, `br-vxlan` ni `br-storage` (esto es esperado antes de `setup-hosts.yml`).
 
-Ejemplo para listar solo los grupos que tienen hosts definidos:
-
+👉 Si el nodo presenta errores de red, se puede reponer con:
 ```bash
-python3 /opt/openstack-ansible/inventory/dynamic_inventory.py --list | \
-  jq 'to_entries[] | select(.value.hosts != []) | .key'
+vagrant destroy controller -f && vagrant up controller
 ```
-
-Esto ayuda a evitar errores como `lxc-attach: command not found` sobre contenedores aún no desplegados.
 
 ---
 
-## 🔍 2. Validación de sintaxis YAML
+## 🔍 2. Validaciones básicas del inventario
+
+### 🧪 Validación de sintaxis YAML
 
 ```bash
 python3 -c "import yaml; d=yaml.safe_load(open('/etc/openstack_deploy/openstack_user_config.yml')); print(type(d), list(d))"
 ```
 
 🗵️ Resultado esperado:
-
 ```bash
 <class 'dict'> ['global_overrides', 'cidr_networks', 'used_ips', 'shared-infra_hosts']
 ```
 
----
-
-## ⚙️ 3. Instalación de dependencias necesarias
-
-Si aún no se han instalado:
+### 🧩 Instalación de herramientas necesarias (si no se hizo en STAGE-1)
 
 ```bash
-sudo /opt/ansible-runtime/bin/pip install -r /opt/openstack-ansible/requirements.txt
+sudo apt install -y lxc lxc-utils lxcfs lxc-templates
 ```
 
-🧹 Incluye: `netaddr`, `osa_toolkit`, `pyyaml`, entre otros.
+⚠️ **Instalación opcional de `jq` para validaciones JSON**:
+```bash
+sudo apt install -y jq
+```
 
----
-
-## 🧪 4. Prueba del inventario dinámico
+### 🛠️ Validar que el inventario dinámico reconoce al nodo `controller`
 
 ```bash
 source /opt/ansible-runtime/bin/activate
-python3 /opt/openstack-ansible/inventory/dynamic_inventory.py --list
+python3 /opt/openstack-ansible/inventory/dynamic_inventory.py --list | jq 'to_entries[] | select(.key | test("controller"))'
 ```
 
-⚠️ Si aparece un error con `AttributeError: 'str' object has no attribute 'get'`, revisar que `provider_networks` tenga esta forma:
+📌 **¿Qué estamos validando?** Que el inventario generado dinámicamente ya contiene información sobre el nodo `controller`.
 
-```yaml
-provider_networks:
-  - network:
-      ip_from_q: container
-      type: raw
-      [...]
-```
+🧠 **Método:** El script `dynamic_inventory.py` genera una estructura JSON completa, y con `jq` filtramos entradas que contienen la palabra `controller` como clave.
 
----
+✅ **Resultado esperado:** Deberías ver al menos un grupo llamado `controller-host_containers` con contenedores listados dentro. Esto indica que el inventario dinámico está funcionando y reconoce el nodo controller.
 
-## 🚩 5. Limpieza de posibles conflictos previos
+### 🧹 Limpieza de datos de inventarios previos (opcional)
 
 ```bash
 sudo rm -rf /etc/openstack_deploy/ansible_facts/*
 sudo mv /etc/openstack_deploy/conf.d /etc/openstack_deploy/conf.d.back
 ```
 
-✅ Esto limpia posibles datos de configuraciones rotas anteriores.
+---
+
+## 🧠 3. Validación avanzada del nodo `controller`
+
+### 🔍 Verificar bridges y configuración de red desde `bastion`
+
+```bash
+ansible controller -m command -a "brctl show"
+ansible controller -m command -a "ip a"
+ansible controller -m command -a "ip r"
+```
+
+Validar que:
+
+- Existe `br-mgmt` y tiene asignado `192.168.56.10/24`
+- Interfaces como `enp0s8`, `enp0s9`, `enp0s10` están unidas a los bridges correctos:
+  - `enp0s8` → `br-mgmt`
+  - `enp0s9` → `br-vxlan`
+  - `enp0s10` → `br-storage`
+- Ninguna IP está asignada directamente sobre interfaces físicas como `enp0s8`.
+
+### ⚠️ Si la red no está limpia o hay errores de asignación:
+
+```bash
+vagrant destroy controller
+vagrant up controller
+```
+
+no olvides limpiar la huella en bastion
+```bash
+ssh-keygen -R controller
+```
+
+Y repetir la validación. 
+
+✅ Esto asegura un nodo `controller` con red consistente, lo cual es **crítico** para los playbooks posteriores.
 
 ---
 
-## 🛠️ 6. Instalación del entorno LXC (requerido)
+## 🧱 4. Preparación opcional de los nodos vía Ansible
+
+Puedes crear un script desde bastion que prepare automáticamente los nodos (`controller`, `network`, `compute`, etc) si necesitas instalar herramientas o limpiar estado previo.
+
+Ejemplo de comando para instalar `bridge-utils` desde bastion:
 
 ```bash
-sudo apt update && sudo apt install -y lxc lxc-templates lxc-utils lxcfs
+ansible all -m apt -a "name=bridge-utils state=present update_cache=true" -b
 ```
 
-Esto habilita comandos como `lxc-attach`, usados por Ansible para acceder a los contenedores.
+Este tipo de tareas puede incluirse en un playbook llamado `prepare-nodes.yml` que asegure que todos los nodos están listos para el despliegue.
 
 ---
 
-## ⚡️ 7. Validación final con Ansible
+## 🔍 5. Exploración del entorno, herramientas y posibilidades
 
-### ✅ Validación controlada (recomendada)
+### 🎯 Entorno virtual: `ansible-runtime`
 
+Activar con:
 ```bash
-ANSIBLE_LOG_PATH=/tmp/ansible.log ansible controller -i /opt/openstack-ansible/inventory/dynamic_inventory.py -m ping
+source /opt/ansible-runtime/bin/activate
 ```
-
-- El host `controller` responde `pong`.
-- Los contenedores pueden dar error si aún no han sido creados (**esperable**).
-- Para evitar esos errores, **limita tus comandos Ansible a grupos o hosts definidos**, o consulta sólo `controller`, como se muestra arriba.
-
-### ✅ Validación completa (experta)
-
+Te permite ejecutar directamente scripts Python del stack, como el inventario dinámico:
 ```bash
-ANSIBLE_LOG_PATH=/tmp/ansible.log ansible all -i /opt/openstack-ansible/inventory/dynamic_inventory.py -m ping
+python3 /opt/openstack-ansible/inventory/dynamic_inventory.py --list | jq
 ```
 
-- Esto intentará contactar también con los contenedores.
-- Si recibes errores como `lxc-attach: command not found`, **es normal** en esta etapa.
-- Puedes usar este comando solo si sabes que los contenedores fueron creados anteriormente.
+### 🎯 Wrapper oficial: `openstack-ansible`
 
----
-
-## 📅 8. Corrección de permisos del sistema de cacheo
-
-Para evitar errores como:
-```text
-error in 'jsonfile' cache, configured path (/etc/openstack_deploy/ansible_facts) does not have necessary permissions (rwx)
-```
-Ejecuta:
-
+Lanza `ansible-playbook` con todos los parámetros y variables necesarias:
 ```bash
-sudo chmod -R 777 /etc/openstack_deploy/ansible_facts
+cd /opt/openstack-ansible/playbooks
+openstack-ansible setup-hosts.yml
 ```
+
+### 🎯 Uso de `ansible` o `ansible-playbook` a mano
+
+Si quieres control total:
+```bash
+ansible controller -i /opt/openstack-ansible/inventory/dynamic_inventory.py -m ping
+```
+O con playbooks personalizados:
+```bash
+ansible-playbook -i inventory/dynamic_inventory.py my-playbook.yml -e @/etc/openstack_deploy/user_variables.yml -e @/etc/openstack_deploy/user_secrets.yml
+```
+
+✅ Utiliza `openstack-ansible` para simplificar, `ansible-playbook` si necesitas personalización total, y `python3` directamente para debug del inventario.
 
 ---
 
@@ -191,7 +229,7 @@ sudo chmod -R 777 /etc/openstack_deploy/ansible_facts
 
 ---
 
-> ✅ **Checkpoint superado:** El inventario se genera correctamente, el nodo `controller` responde y las herramientas están listas.
+> ✅ **Checkpoint superado:** El inventario se genera correctamente, el nodo `controller` responde, y sus interfaces están correctamente configuradas.
 >
 > ⏩ En STAGE-3 se comenzará la expansión del inventario con nuevos roles (`repo-infra_hosts`, `keystone_hosts`, `compute_hosts`, etc) y su despliegue con `setup-hosts.yml`.
 

@@ -1,21 +1,158 @@
-# 🚀 STAGE-3: Expansión del Inventario y Preparación de Hosts
+# 🚀 STAGE-3: Expansión del Inventario y Ejecución de los primeros playbooks
 
-Este stage amplía el inventario de forma progresiva para incluir nuevos nodos y contenedores. Además, ejecutaremos el primer playbook de despliegue: `setup-hosts.yml`.
-
-> ⚠️ **Recuerda**: los contenedores LXC **se crearán dentro de los nodos definidos en el inventario**, como `controller`, y **no** en el nodo `bastion`. El nodo `bastion` se utiliza sólo como punto de orquestación.
+En esta etapa se amplía el inventario para incluir nuevos nodos y contenedores, y se inicia la ejecución efectiva de los playbooks de OpenStack-Ansible. Esta fase da comienzo al proceso de instalación de paquetes, configuración de contenedores y preparación de los nodos según el inventario definido.
 
 ---
 
-## 🌟 Objetivos
+## ✨ Objetivos
 
-- ➕ Ampliar el inventario con nuevos grupos: `repo-infra_hosts`, `keystone_hosts`, `compute_hosts`, `infra_hosts`...
-- ⚙️ Ejecutar `setup-hosts.yml` para configurar los hosts y contenedores base.
-- 📋 Validar contenedores LXC generados.
-- 🔗 Reforzar el flujo: definir -> verificar -> desplegar.
+- 🧱 Ampliar el inventario con nuevos grupos: `repo-infra_hosts`, `keystone_hosts`, `compute_hosts`, `infra_hosts`...
+- ⚙️ Ejecutar `setup-hosts.yml` para configurar los hosts y bridges necesarios.
+- 🚧 Crear contenedores LXC en el nodo `controller`.
+- 🔍 Validar que los bridges de red y contenedores han sido creados correctamente.
+- 📒 Observar logs y gestionar errores frecuentes durante la ejecución.
+- 🧪 Introducir validaciones previas antes de ampliar completamente el inventario, para aislar errores tempranos.
 
 ---
 
-## 📂 1. Ampliación del inventario (`openstack_user_config.yml`)
+## 📂 1. Inventario Mínimo Inicial
+
+Antes de desplegar todos los servicios, es conveniente comenzar con una versión mínima de inventario que incluya solo `shared-infra_hosts` y un único nodo (`controller`).
+
+```yaml
+global_overrides:
+  internal_lb_vip_address: 192.168.56.254
+  external_lb_vip_address: 192.168.56.254
+  tunnel_bridge: br-vxlan
+  management_bridge: br-mgmt
+  provider_networks:
+    - network:
+        container_bridge: br-mgmt
+        container_type: veth
+        container_interface: eth1
+        ip_from_q: container
+        type: raw
+        group_binds:
+          - all_containers
+          - hosts
+        is_management_address: true
+
+cidr_networks:
+  container: 192.168.56.0/24
+  tunnel: 10.0.0.0/24
+  storage: 172.16.0.0/24
+
+used_ips:
+  - 192.168.56.1
+  - 192.168.56.2
+
+shared-infra_hosts:
+  controller:
+    ip: 192.168.56.10
+```
+
+Valida con:
+```bash
+python3 /opt/openstack-ansible/inventory/dynamic_inventory.py --list | jq 'keys'
+```
+
+✅ Esto permite validar la ejecución de `setup-hosts.yml` sin errores de grupos vacíos.
+
+---
+
+## ⚖️ 2. Activar entorno Ansible
+
+Antes de ejecutar cualquier playbook:
+```bash
+source /opt/ansible-runtime/bin/activate
+```
+
+---
+
+## 🟡 3. Ejecutar playbook con inventario mínimo
+
+```bash
+cd /opt/openstack-ansible/playbooks
+openstack-ansible setup-hosts.yml
+```
+
+🔍 Observa que:
+- Se creen directorios PKI.
+- Se generen claves SSH.
+- El nodo `controller` sea accesible vía Ansible.
+
+---
+
+## 📈 4. Validaciones post `setup-hosts.yml`
+
+### Verificación de bridges en `controller`
+```bash
+ansible controller -m command -a "brctl show"
+```
+
+### Verificación de contenedores LXC
+```bash
+ansible controller -m command -a "lxc-ls -f"
+```
+
+### Inventario resultante (resumen con IPs)
+```bash
+python3 /opt/openstack-ansible/inventory/dynamic_inventory.py --list | \
+  jq 'to_entries[] | select(.value.ip != null) | {host: .key, ip: .value.ip}'
+```
+
+📌 Si no aparece nada, algo falló en la ejecución anterior.
+
+---
+
+## 🧪 5. Validaciones si los contenedores LXC fallan al arrancar
+
+Si obtienes errores del tipo:
+```
+lxc-start: Received container state "ABORTING" instead of "RUNNING"
+lxc-attach: Failed to get init pid / attach context
+```
+Sigue estos pasos en el nodo `controller`:
+
+### Verifica que los módulos del kernel están cargados
+```bash
+lsmod | grep -E 'veth|bridge|overlay|cgroup'
+```
+Si faltan:
+```bash
+sudo modprobe veth
+sudo modprobe bridge
+sudo modprobe overlay
+```
+
+### Asegura que los servicios LXC están activos
+```bash
+sudo systemctl enable --now lxc
+sudo systemctl enable --now lxc-net
+```
+
+### Arregla los bridges manualmente si `setup-hosts` falló parcialmente
+Si el primer `setup-hosts.yml` se interrumpió, es **posible que los bridges de red como `br-mgmt` no se hayan creado correctamente**. Verifica con:
+```bash
+brctl show
+```
+Si faltan, reejecuta `setup-hosts.yml` tras asegurarte de que los dispositivos de red están en buen estado o crea los bridges manualmente según el inventario.
+
+### Consulta logs de error
+```bash
+sudo cat /var/log/lxc/lxc-controller-*.log
+journalctl -xe | grep lxc
+```
+
+---
+
+## 📦 6. Ampliación del inventario (`openstack_user_config.yml`)
+
+La necesidad de esta ampliación fue identificada a partir del error:
+```
+FAILED! => {... "url": "http://192.168.56.254:8181/constraints/upper_constraints_cached.txt"}
+```
+que indicaba la ausencia del contenedor `repo`. Esto llevó a concluir que debían definirse los grupos mínimos adicionales necesarios para el despliegue básico.
 
 ```yaml
 repo-infra_hosts:
@@ -35,144 +172,91 @@ compute_hosts:
     ip: 192.168.56.11
 ```
 
-> ✅ Asegúrate de que la IP `192.168.56.11` (nodo compute) esté creada por Vagrant.
+🔎 **¿Por qué se añaden estos grupos?**
 
-Ejecuta:
-```bash
-vagrant up compute
-```
+Cada grupo de inventario indica a OpenStack-Ansible qué servicios desplegar y dónde:
 
-Y valida conectividad:
-```bash
-ping 192.168.56.11
-```
+- `repo-infra_hosts`: indica que se debe crear un contenedor `repo` para alojar paquetes y constraints internos.
+- `keystone_hosts`: habilita la creación del contenedor Keystone, responsable del servicio de identidad.
+- `infra_hosts`: agrupa servicios de infraestructura como RabbitMQ, Galera y Memcached.
+- `compute_hosts`: donde se desplegarán los servicios de cómputo (nova-compute, libvirt...).
 
----
-
-## 🔍 2. Verificación del inventario extendido
-
-```bash
-source /opt/ansible-runtime/bin/activate
-python3 /opt/openstack-ansible/inventory/dynamic_inventory.py --list | jq 'keys'
-```
-
-Confirma que aparecen nuevos grupos: `repo-infra_hosts`, `keystone_hosts`, `infra_hosts`, `compute_hosts`.
-
-> ⚠️ Si no tienes instalado `jq`:
-```bash
-sudo apt install -y jq
-```
+⚠️ Si un grupo necesario no está presente o vacío, los playbooks correspondientes omitirán pasos o fallarán por falta de destino.
 
 ---
 
-## ⚖️ 3. Ejecución de `setup-hosts.yml`
+## 🔍 7. Validación y ejecución tras ampliar inventario
 
-Este playbook crea los contenedores base para los grupos definidos.
+Tras añadir nuevos grupos, es necesario **repetir**:
 
-> ⚠️ **Importante**: El archivo `setup-hosts.yml` se encuentra en el subdirectorio `playbooks/`. Debes **especificar la ruta completa** si no estás dentro del subdirectorio correspondiente.
-
-Ubicación esperada del archivo:
-```text
-/opt/openstack-ansible/playbooks/setup-hosts.yml
-```
-
-Comando:
 ```bash
-cd /opt/openstack-ansible
-openstack-ansible playbooks/setup-hosts.yml
+openstack-ansible setup-hosts.yml
+openstack-ansible setup-infrastructure.yml
 ```
 
-### 🔎 Requisitos previos para evitar errores comunes
+Esto permite:
+- Crear contenedores para los nuevos servicios.
+- Reparar configuraciones previas si se ejecutaron parcialmente.
 
-Asegúrate de tener estas variables definidas en `/etc/openstack_deploy/user_variables.yml`:
-
-```yaml
-openstack_pki_dir: "/etc/openstack_deploy/pki"
-openstack_ssh_keypairs_dir: "/etc/openstack_deploy/ssh"
-openstack_ssh_keypairs_authorities: []
-```
-
-Ejecuta:
-```bash
-sudo mkdir -p /etc/openstack_deploy/pki /etc/openstack_deploy/ssh
-sudo chown -R vagrant:vagrant /etc/openstack_deploy/{pki,ssh}
-```
-
-Valida que el directorio de logs tenga permisos adecuados:
-```bash
-sudo mkdir -p /openstack/log/ansible-logging
-sudo touch /openstack/log/ansible-logging/ansible.log
-sudo chmod 666 /openstack/log/ansible-logging/ansible.log
-```
-
-Y los permisos del directorio de cache:
-```bash
-sudo chmod -R 755 /etc/openstack_deploy/ansible_facts
-```
-
-> 📂 Las dependencias necesarias (como `lxc`) deben instalarse en los nodos destino, como `controller`. En el nodo `controller` ejecuta:
-```bash
-sudo apt update && sudo apt install -y lxc jq
-```
+📊 Nota: En la primera ejecución de `setup-hosts.yml`, si el nodo `compute` está en el inventario pero no ha sido preparado (sin bridges de red, sin dependencias), fallará. Prepara la red antes o ejecuta con `--limit controller` si es necesario.
 
 ---
 
-## 🔠 4. Validación de contenedores creados
+## 🔎 8. Exploración y troubleshooting post-playbook
 
-> 🔗 **Importante**: los contenedores LXC serán visibles en los nodos como `controller`, **no en `bastion`**.
-
-Lista contenedores LXC:
+- Verifica bridges:
 ```bash
+ansible controller -m command -a "ip link show type bridge"
+```
+- Revisa logs:
+```bash
+cat /openstack/log/ansible-logging/ansible.log
+```
+- Lista contenedores con:
+```bash
+ssh controller
 sudo lxc-ls -f
 ```
 
-Ejecuta este comando directamente **en el nodo objetivo** (por ejemplo, en `controller`, accediendo vía `vagrant ssh controller`).
-
-Resultado esperado (puede variar):
-```
-NAME                                      STATE   AUTOSTART GROUPS IPV4
-controller-repo-container-xxx             RUNNING 1         -      192.168.56.X
-controller-keystone-container-xxx         RUNNING 1         -      192.168.56.X
-...
-```
-
 ---
 
-## ✅ 5. Validación con Ansible
+## ⚠️ Problemas comunes y soluciones
 
-Ejecuta:
+### 1. Contenedor no creado / error LXC
+- Falta instalación de `lxc` en `controller`
 ```bash
-ANSIBLE_LOG_PATH=/tmp/ansible.log ansible controller -i /opt/openstack-ansible/inventory/dynamic_inventory.py -m ping
+sudo apt install -y lxc
 ```
 
-Y si quieres validar todos los hosts definidos:
+### 2. Inventario vacío o erróneo
+- Sintaxis YAML incorrecta
+- El grupo no tiene nodos definidos
+
+### 3. Permisos de logs o facts
 ```bash
-ansible all -i /opt/openstack-ansible/inventory/dynamic_inventory.py -m ping
+sudo chmod -R 755 /etc/openstack_deploy/ansible_facts
+sudo mkdir -p /openstack/log/ansible-logging
+sudo chmod -R 777 /openstack/log
 ```
 
-> ⛰️ Puedes ignorar contenedores que aún no estén listos. Se irán creando en fases posteriores.
+### 4. Clave SSH desincronizada tras `vagrant destroy`
+```bash
+ssh-keygen -f "/home/vagrant/.ssh/known_hosts" -R "controller"
+```
 
 ---
 
-## 🗆️ Checkpoint final de STAGE-3
+## ✅ Conclusión
 
-- [x] `dynamic_inventory.py --list` devuelve todos los grupos definidos.
-- [x] `setup-hosts.yml` se ejecuta correctamente con su ruta `playbooks/setup-hosts.yml`.
-- [x] Contenedores LXC son creados en los nodos del inventario.
-- [x] El comando `ansible all -m ping` funciona sobre los hosts definidos.
-- [x] Los directorios y variables necesarias están definidos para `pki` y `ssh_keypairs`.
-- [x] El error `openstack_ssh_keypairs_authorities is undefined` ha sido resuelto con una definición vacía.
-- [x] El paquete `lxc` está instalado en los nodos donde se crean los contenedores (ej. `controller`).
+Al finalizar esta etapa:
+- El inventario ha sido validado por fases.
+- El nodo `controller` está correctamente preparado.
+- Se han generado los primeros contenedores LXC.
+- Los logs y puentes de red están verificados.
+- Se ha aprendido a **resolver fallos de red tras crashes**.
+- Se ha definido el conjunto mínimo de grupos para permitir el despliegue de los servicios base.
+- Se ha establecido el flujo de idempotencia: editar inventario y repetir `setup-hosts.yml` y `setup-infrastructure.yml`.
+- Se reconfirma que no se deben lanzar contenedores manualmente con `lxc-start -F`.
 
----
-
-## 📜 Referencias
-
-- [Inventory configuration](https://docs.openstack.org/openstack-ansible/latest/user/configure.html)
-- [setup-hosts.yml](https://docs.openstack.org/openstack-ansible/latest/user/deployment-hosts.html)
-- [Working with containers](https://docs.openstack.org/openstack-ansible/latest/admin/container-management.html)
-
----
-
-> 🗄️ En STAGE-4 se desplegarán los servicios básicos como Keystone, RabbitMQ, Galera y Horizon.
+👈 En `STAGE-4` se desplegarán los servicios base (Galera, RabbitMQ, Keystone...).
 
