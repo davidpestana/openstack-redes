@@ -126,6 +126,30 @@ Y añadir `become: true`:
 
 ---
 
+### 📅 Validaciones clave de HAProxy con IP flotante `192.168.56.254`
+
+**Uso esperado:** acceden los contenedores LXC y a veces el host físico para descargar `upper_constraints_cached.txt` y paquetes Python cacheados.
+
+**Validaciones esenciales:**
+
+#### 🔹 Nivel 1: Red
+- `ip a show br-mgmt` → ¿Tiene la IP `192.168.56.254/24`?
+- `ping -c 3 192.168.56.254` desde un contenedor
+
+#### 🔹 Nivel 2: HTTP
+- `curl -I http://192.168.56.254:8181/...` desde host y contenedores
+- `ss -tlnp | grep 8181` en host: ¿escucha en `192.168.56.254:8181`?
+
+#### 🔹 Nivel 3: Inventario y variables
+- `repo_server.host_address` en `openstack_user_config.yml` → debe ser `.254`
+- `haproxy_hosts` en inventario → ¿está `controller` como `haproxy`?
+
+#### 🔹 Nivel 4: Uso real
+- Fases como `repo_build`, `pip_install`, `setup-hosts.yml` llaman a esa IP
+- Fallos con `No route to host` indican que algo de los anteriores falla
+
+---
+
 ### ✅ Recomendación final
 
 Después de aplicar las correcciones, relanzar el playbook:
