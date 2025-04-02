@@ -46,15 +46,6 @@ Desde `bastion`:
 
 ---
 
-### 🔹 Validaciones específicas en `controller`
-
-#### 🔹 HAProxy y br-mgmt
-- `br-mgmt` debe tener IP `192.168.56.254`
-- `ss -tlnp | grep 8181` debe mostrar que HAProxy escucha en `192.168.56.254:8181`
-- `curl http://192.168.56.3:8181` desde `controller` debe devolver HTTP 200 (acceso al repo)
-
----
-
 ### 🔹 Recomendaciones clave
 
 - **Asignar rutas estáticas por interfaz `br-mgmt`** para todos los nodos desde el principio.
@@ -64,6 +55,41 @@ Desde `bastion`:
 - **Revisar el Vagrantfile cuidadosamente**: algunas configuraciones pueden generar interfaces residuales (`enp0s8`) que entran en conflicto con `br-mgmt`. Esto puede generar rutas incorrectas y errores de conectividad. Dejar este fallo intencionado puede ser útil como ejercicio formativo.
 - **Verificar las rutas de retorno por red de mantenimiento (`br-mgmt`)** entre todos los nodos y hacia `bastion` como condición previa obligatoria.
 - **Validar que `bastion` conecta por SSH a todos los nodos usando exclusivamente la interfaz `br-mgmt`**, para garantizar que los servicios y despliegues posteriores usarán las redes adecuadas (mantenimiento, datos, almacenamiento).
+
+---
+
+### 🔧 Reajuste del Vagrantfile tras validaciones manuales
+
+Una vez detectado que los interfaces de red están mal mapeados, se recomienda **refactorizar el `Vagrantfile`** para automatizar los arreglos validados manualmente:
+
+- Asignar correctamente las redes internas con `virtualbox__intnet` a cada interfaz, según su propósito (`mgmt`, `data`, `storage`).
+- Eliminar o evitar la interfaz NAT predeterminada si no es necesaria.
+- Usar `vb.customize` para asegurar modo promiscuo en interfaces necesarias.
+- Verificar que las IPs estén en la interfaz correcta y sin superposición de rutas.
+- Confirmar que la red de mantenimiento (`openstack-mgmt`) esté siempre asignada a la misma NIC.
+
+Este reajuste garantiza reproducibilidad y evita repetir correcciones manuales en cada despliegue.
+
+---
+
+### 🧰 Cheat Sheet: bridge-utils
+
+Herramientas útiles cuando se usan bridges en entornos con LXC o redes virtuales:
+
+```bash
+brctl show               # Ver bridges definidos y sus interfaces
+brctl showmacs <bridge>  # Ver direcciones MAC aprendidas por el bridge
+brctl addbr <bridge>     # Crear un bridge
+brctl addif <bridge> <iface>  # Añadir interfaz a un bridge
+brctl delif <bridge> <iface>  # Quitar interfaz de un bridge
+brctl delbr <bridge>     # Eliminar un bridge (si está vacío)
+```
+
+> Nota: `bridge-utils` puede no venir instalado por defecto. Instalar con:
+```bash
+sudo apt install bridge-utils
+```
+
 
 ---
 
