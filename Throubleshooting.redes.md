@@ -18,7 +18,8 @@ Desde cada nodo:
 - `ping <IP de cada nodo relevante>`
 
 Desde `bastion`:
-- `ssh vagrant@<ip_nodo>` debe conectar sin timeout.
+- `ssh controller`, `ssh compute`, etc. deben funcionar directamente, resolviendo nombres por `/etc/hosts`.
+- La conexión SSH debe establecerse vía interfaz de mantenimiento (`br-mgmt`), no por interfaces residuales.
 
 #### ✅ Rutas
 - Ejecutar en cada nodo:
@@ -26,6 +27,15 @@ Desde `bastion`:
   ip route get <IP de otro nodo>
   ```
   La interfaz usada debe ser `br-mgmt`, **nunca `enp0s8` o interfaces residuales de VirtualBox**.
+
+- Validar también:
+  ```bash
+  ip route get <IP bastion>
+  ```
+  Y si fuera necesario:
+  ```bash
+  sudo ip route add <IP bastion> dev br-mgmt
+  ```
 
 #### ✅ SSHD
 - `ss -tlnp | grep :22` debe mostrar `0.0.0.0:22` o `192.168.x.x:22` como `LISTEN`
@@ -43,13 +53,6 @@ Desde `bastion`:
 - `ss -tlnp | grep 8181` debe mostrar que HAProxy escucha en `192.168.56.254:8181`
 - `curl http://192.168.56.3:8181` desde `controller` debe devolver HTTP 200 (acceso al repo)
 
-#### 🔹 Rutas de retorno correctas
-- `ip route get <IP bastion>` debe indicar `dev br-mgmt`, no `enp0s8`
-- Si no es así:
-  ```bash
-  sudo ip route add <IP bastion> dev br-mgmt
-  ```
-
 ---
 
 ### 🔹 Recomendaciones clave
@@ -58,6 +61,9 @@ Desde `bastion`:
 - **Eliminar o ignorar interfaces como `enp0s8`** si no están en uso real.
 - Documentar en `inventory` e `interfaces` de red todas las IPs asignadas y su función.
 - Asegurar que todas las pruebas de red pasen **antes** de ejecutar `openstack-ansible`.
+- **Revisar el Vagrantfile cuidadosamente**: algunas configuraciones pueden generar interfaces residuales (`enp0s8`) que entran en conflicto con `br-mgmt`. Esto puede generar rutas incorrectas y errores de conectividad. Dejar este fallo intencionado puede ser útil como ejercicio formativo.
+- **Verificar las rutas de retorno por red de mantenimiento (`br-mgmt`)** entre todos los nodos y hacia `bastion` como condición previa obligatoria.
+- **Validar que `bastion` conecta por SSH a todos los nodos usando exclusivamente la interfaz `br-mgmt`**, para garantizar que los servicios y despliegues posteriores usarán las redes adecuadas (mantenimiento, datos, almacenamiento).
 
 ---
 
