@@ -13,9 +13,9 @@ Este documento recoge las validaciones mínimas y recomendaciones clave para ase
 
 #### ✅ Conectividad de red
 Desde cada nodo:
-- `ping <IP bastion>`
-- `ping <IP controller>`
-- `ping <IP de cada nodo relevante>`
+- `ping <IP bastion>` *(nota: Ubuntu Server puede tener ICMP bloqueado por defecto, lo consideramos opcional)*
+- `ping <IP controller>` *(idem)*
+- `ping <IP de cada nodo relevante>` *(idem)*
 
 Desde `bastion`:
 - `ssh controller`, `ssh compute`, etc. deben funcionar directamente, resolviendo nombres por `/etc/hosts`.
