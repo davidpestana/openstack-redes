@@ -126,7 +126,7 @@ Y añadir `become: true`:
 
 ---
 
-### 📅 Validaciones clave de HAProxy con IP flotante `192.168.56.254`
+### 🗓 Validaciones clave de HAProxy con IP flotante `192.168.56.254`
 
 **Uso esperado:** acceden los contenedores LXC y a veces el host físico para descargar `upper_constraints_cached.txt` y paquetes Python cacheados.
 
@@ -134,7 +134,7 @@ Y añadir `become: true`:
 
 #### 🔹 Nivel 1: Red
 - `ip a show br-mgmt` → ¿Tiene la IP `192.168.56.254/24`?
-- `ping -c 3 192.168.56.254` desde un contenedor
+- `ping -c 3 192.168.56.254` desde un contenedor *(si está habilitado ICMP)*
 
 #### 🔹 Nivel 2: HTTP
 - `curl -I http://192.168.56.254:8181/...` desde host y contenedores
@@ -147,6 +147,12 @@ Y añadir `become: true`:
 #### 🔹 Nivel 4: Uso real
 - Fases como `repo_build`, `pip_install`, `setup-hosts.yml` llaman a esa IP
 - Fallos con `No route to host` indican que algo de los anteriores falla
+
+---
+
+### ✅ Conclusión validada
+
+Una vez corregida la configuración de red y ruteo en el nodo `controller`, HAProxy puede escuchar correctamente en `192.168.56.254:8181`, y los contenedores pueden acceder al repo sin errores. La ejecución de `setup-hosts.yml` finaliza sin fallos, validando la funcionalidad de red esperada para HAProxy.
 
 ---
 
