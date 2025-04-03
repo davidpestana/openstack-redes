@@ -9,6 +9,8 @@ El archivo `openstack_user_config.yml` no especifica de forma explícita el mape
 ### Solución:
 Editar la sección `provider_networks` del archivo `openstack_user_config.yml` para incluir la clave `bridge_mapping`, que especifica qué interfaz física se asocia a qué bridge.
 
+**Nota:** Si en ejecuciones anteriores se definió un grupo `compute_hosts` y luego se eliminó del archivo, puede persistir en el inventario. En ese caso, eliminar el archivo `/etc/openstack_deploy/openstack_inventory.json` y regenerar el inventario es esencial para evitar errores.
+
 ### Ejemplo corregido:
 ```yaml
 global_overrides:
@@ -41,8 +43,6 @@ used_ips:
 shared-infra_hosts:
   controller:
     ip: 192.168.56.10
-
-compute-hosts: {}
 ```
 
 ### Requisitos en el nodo físico:
