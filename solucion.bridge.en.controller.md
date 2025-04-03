@@ -1,17 +1,21 @@
 ## Configuración correcta del interfaz de red en OpenStack-Ansible
 
 ### Problema:
+
 Al ejecutar `setup-hosts`, el nodo `controller` no asigna correctamente la interfaz de red a la red de virtualización. Como resultado, los contenedores no obtienen IPs y fallan.
 
 ### Causa:
-El archivo `openstack_user_config.yml` no especifica de forma explícita el mapeo entre el bridge de contenedores (`br-vxlan`) y la interfaz física real (`eth2`), que se usará como red de virtualización.
+
+El archivo `openstack_user_config.yml` define solo la red de gestión (`br-mgmt`) con tipo `raw`, pero **no hay ninguna red definida como red de virtualización**. Al no existir una red mapeada a una interfaz física activa, **no se crea el bridge** y los contenedores carecen de conectividad.
 
 ### Solución:
-Editar la sección `provider_networks` del archivo `openstack_user_config.yml` para incluir una única red con `bridge_mapping`, que vincule `br-vxlan` con la interfaz física deseada (`eth2`).
+
+Modificar la sección `provider_networks` para que defina una red de tipo `flat` con `bridge_mapping`, lo que permite a OpenStack-Ansible crear automáticamente el bridge (`br-vxlan`) y asociarlo a la interfaz física real (`enp0s8` en este caso).
 
 **Nota:** Si en ejecuciones anteriores se definieron otras redes o grupos de hosts, eliminar el archivo `/etc/openstack_deploy/openstack_inventory.json` y regenerar el inventario puede ser necesario para evitar errores por configuración antigua.
 
 ### Ejemplo corregido:
+
 ```yaml
 global_overrides:
   internal_lb_vip_address: 192.168.56.254
@@ -22,13 +26,13 @@ global_overrides:
     - network:
         container_bridge: br-vxlan
         container_type: veth
-        container_interface: eth2
+        container_interface: enp0s8
+        bridge_mapping: "br-vxlan:enp0s8"
         ip_from_q: container
-        type: raw
+        type: flat
         group_binds:
           - all_containers
           - hosts
-        bridge_mapping: "br-vxlan:eth2"
 
 cidr_networks:
   container: 192.168.56.0/24
@@ -45,9 +49,16 @@ shared-infra_hosts:
 ```
 
 ### Requisitos en el nodo físico:
-Antes de ejecutar `setup-hosts`, asegúrate de:
-- Que `eth2` existe y está levantado (`ip link set eth2 up`).
-- Que `eth2` está conectado a la red correcta (192.168.56.0/24 o la que se use para virtualización).
 
-Esto permitirá que el script cree `br-vxlan`, lo vincule con `eth2`, y asigne correctamente las IPs a los contenedores.
+Antes de ejecutar `setup-hosts`, asegúrate de:
+
+- Que la interfaz física indicada (`enp0s8`) **existe y está levantada**.
+- Que está conectada a la red `192.168.56.0/24`.
+
+Con esta configuración, `setup-hosts.yml`:
+- Crea automáticamente el bridge `br-vxlan`.
+- Lo enlaza a `enp0s8`.
+- Asigna IPs a los contenedores sin intervención manual.
+
+Este enfoque permite un despliegue 100% automático y reproducible del nodo `controller` en entornos didácticos o de laboratorio.
 
