@@ -41,6 +41,8 @@ used_ips:
 shared-infra_hosts:
   controller:
     ip: 192.168.56.10
+
+compute-hosts: {}
 ```
 
 ### Requisitos en el nodo físico:
