@@ -4,12 +4,12 @@
 Al ejecutar `setup-hosts`, el nodo `controller` no asigna correctamente la interfaz de red a la red de virtualización. Como resultado, los contenedores no obtienen IPs y fallan.
 
 ### Causa:
-El archivo `openstack_user_config.yml` no especifica de forma explícita el mapeo entre el bridge de contenedores (`br-mgmt`) y la interfaz física real (`eth1`).
+El archivo `openstack_user_config.yml` no especifica de forma explícita el mapeo entre el bridge de contenedores (`br-vxlan`) y la interfaz física real (`eth2`), que se usará como red de virtualización.
 
 ### Solución:
-Editar la sección `provider_networks` del archivo `openstack_user_config.yml` para incluir la clave `bridge_mapping`, que especifica qué interfaz física se asocia a qué bridge.
+Editar la sección `provider_networks` del archivo `openstack_user_config.yml` para incluir una única red con `bridge_mapping`, que vincule `br-vxlan` con la interfaz física deseada (`eth2`).
 
-**Nota:** Si en ejecuciones anteriores se definió un grupo `compute_hosts` y luego se eliminó del archivo, puede persistir en el inventario. En ese caso, eliminar el archivo `/etc/openstack_deploy/openstack_inventory.json` y regenerar el inventario es esencial para evitar errores.
+**Nota:** Si en ejecuciones anteriores se definieron otras redes o grupos de hosts, eliminar el archivo `/etc/openstack_deploy/openstack_inventory.json` y regenerar el inventario puede ser necesario para evitar errores por configuración antigua.
 
 ### Ejemplo corregido:
 ```yaml
@@ -20,16 +20,15 @@ global_overrides:
   management_bridge: br-mgmt
   provider_networks:
     - network:
-        container_bridge: br-mgmt
+        container_bridge: br-vxlan
         container_type: veth
-        container_interface: eth1
+        container_interface: eth2
         ip_from_q: container
         type: raw
         group_binds:
           - all_containers
           - hosts
-        is_management_address: true
-        bridge_mapping: "br-mgmt:eth1"
+        bridge_mapping: "br-vxlan:eth2"
 
 cidr_networks:
   container: 192.168.56.0/24
@@ -47,8 +46,8 @@ shared-infra_hosts:
 
 ### Requisitos en el nodo físico:
 Antes de ejecutar `setup-hosts`, asegúrate de:
-- Que `eth1` existe y está levantado (`ip link set eth1 up`).
-- Que `eth1` está conectado a la red correcta (192.168.56.0/24).
+- Que `eth2` existe y está levantado (`ip link set eth2 up`).
+- Que `eth2` está conectado a la red correcta (192.168.56.0/24 o la que se use para virtualización).
 
-Esto permitirá que el script cree `br-mgmt`, lo vincule con `eth1`, y asigne correctamente las IPs a los contenedores.
+Esto permitirá que el script cree `br-vxlan`, lo vincule con `eth2`, y asigne correctamente las IPs a los contenedores.
 
